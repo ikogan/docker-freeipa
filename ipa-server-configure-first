@@ -35,17 +35,30 @@ trap exit TERM
 trap stop_running EXIT
 
 function update_server_ip_address () {
+	CURRENT_RECORD=$( host -t A $HOSTNAME_FQDN )
+	MY_IP=${IPA_SERVER_IP:-$( /sbin/ip addr show | awk '/inet .*global/ { split($2,a,"/"); print a[1]; }' | head -1 )}
+	if [ "$CURRENT_RECORD" == "$HOSTNAME_FQDN has address $MY_IP" ] ; then
+		return
+	fi
+
 	kdestroy -A
 	kinit -k
 	(
 		echo "server 127.0.0.1"
 		echo "update delete $HOSTNAME_FQDN A"
-		MY_IP=${IPA_SERVER_IP:-$( /sbin/ip addr show | awk '/inet .*global/ { split($2,a,"/"); print a[1]; }' | head -1 )}
 		echo "update add $HOSTNAME_FQDN 180 A $MY_IP"
 		echo "send"
 		echo "quit"
 	) | nsupdate -g
 	kdestroy -A
+
+	while true ; do
+		NEW_RECORD=$( host -t A $HOSTNAME_FQDN )
+		if [ "$?" -eq 0 ] && [ -n "$NEW_RECORD" ] && ! [ "$NEW_RECORD" == "$CURRENT_RECORD" ] ; then
+			return
+		fi
+		sleep 1
+	done
 }
 
 function upgrade_server () {
@@ -53,6 +66,7 @@ function upgrade_server () {
 	for i in 389-ds-base pki-server ; do
 		rpm -q --scripts $i | perl -lne '/^\S+ scriptlet/ and $x = 0; print if $x; if (/^postinstall scriptlet \(using (\S+)\)/) { $x = 1; print "#!$1"; if ($1 eq "/bin/sh") { print "set -x" } }' > /tmp/$i.script
 		if [ -s "/tmp/$i.script" ] ; then
+			sed -i '\|/sbin/ldconfig|d' /tmp/$i.script
 			chmod a+x /tmp/$i.script
 			/tmp/$i.script 2
 		fi
@@ -78,7 +92,33 @@ function upgrade_server () {
 if ! [ -f /etc/ipa/ca.crt ] ; then
 	( cd /data-template && tar cf - . ) | ( cd /data && tar xf - )
 fi
-systemd-tmpfiles --remove --create 2>&1 | grep -v 'Failed to replace specifiers' || :
+if ! [ -s /etc/machine-id ] ; then
+	uuidgen | sed 's/-//g' > /etc/machine-id
+fi
+if [ -f /etc/ipa/ca.crt ] ; then
+	( cd /data-template && find * | while read f ; do
+		if [ -d "/data-template/$f" ] && [ -f "/data/$f" ] ; then
+			echo "Removing file /data/$f, replacing with directory from /data-template."
+			rm -f "/data/$f"
+		fi
+		if ! [ -e /data/$f ] ; then
+			tar cf - $f | ( cd /data && tar xf - )
+		fi
+		done
+	)
+	sha256sum -c /etc/volume-data-autoupdate 2> /dev/null | awk -F': ' '/OK$/ { print $1 }' \
+		| while read f ; do
+			rm -f "/data/$f"
+			( cd /data-template && tar cf - "./$f" ) | ( cd /data && tar xvf - )
+		done
+	cat /etc/volume-data-list | while read i ; do
+		if [ -e /data-template$i -a -e /data$i ] ; then
+			chown --reference=/data-template$i /data$i
+			chmod --reference=/data-template$i /data$i
+		fi
+	done
+fi
+systemd-tmpfiles --remove --create
 
 find /run ! -type d | xargs rm -f
 rm -rf /tmp/*
@@ -109,38 +149,14 @@ if [ -f /etc/ipa/ca.crt ] ; then
 		for d in /usr/share/java/resteasy* ; do
 			sed -i 's#^\(JAVA_OPTS=".*-DRESTEASY_LIB=\)/usr/share/java/resteasy[a-z-]*\(.*"\)#\1'$d'\2#' /etc/sysconfig/pki-tomcat
 		done
-		( cd /data-template && find * | while read f ; do
-			if [ -d "/data-template/$f" ] && [ -f "/data/$f" ] ; then
-				echo "Removing file /data/$f, replacing with directory from /data-template."
-				rm -f "/data/$f"
-			fi
-			if ! [ -e /data/$f ] ; then
-				tar cf - $f | ( cd /data && tar xf - )
-			fi
-			done
-		)
-		sha256sum -c /etc/volume-data-autoupdate 2> /dev/null | awk -F': ' '/OK$/ { print $1 }' \
-			| while read f ; do
-				rm -f "/data/$f"
-				( cd /data-template && tar cf - "./$f" ) | ( cd /data && tar xvf - )
-			done
-		cat /etc/volume-data-list | while read i ; do
-			if [ -e /data-template$i -a -e /data$i ] ; then
-				chown --reference=/data-template$i /data$i
-				chmod --reference=/data-template$i /data$i
-			fi
-		done
 		upgrade_server
 	fi
 	systemctl start-enabled
 	HOSTNAME_FQDN=$( hostname -f )
-	while ! host $HOSTNAME_FQDN > /dev/null ; do
-		sleep 5
+	while ! host -t A $HOSTNAME_FQDN > /dev/null ; do
+		sleep 1
 	done
 	update_server_ip_address
-	while ! host $HOSTNAME_FQDN > /dev/null ; do
-		sleep 5
-	done
 	host $HOSTNAME_FQDN
 	echo "FreeIPA server started."
 else
