@@ -22,6 +22,8 @@
 /etc/systemd/system/
 /etc/tmpfiles.d/
 /etc/yp.conf
+/etc/samba/
+/etc/oddjobd.conf.d
 /root/ca-agent.p12
 /root/cacert.p12
 /root/.dogtag/
@@ -46,6 +48,7 @@
 /var/lib/sss/mc/
 /var/lib/sss/pipes/
 /var/lib/sss/pubconf/
+/var/lib/samba/
 /var/log/
 /var/named/data/
 /var/named/dynamic/

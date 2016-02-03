@@ -241,6 +241,22 @@ else
 		) | xargs $RUN_CMD -U $IPA_SERVER_INSTALL_OPTS ; then
 		sed -i 's/default_ccache_name/# default_ccache_name/' /data/etc/krb5.conf
 		cp -f /etc/resolv.conf /data/etc/resolv.conf.ipa
+
+		if [ -f /data/ipa-server-adtrust-install-options ]; then
+			ADMIN_PASSWORD=$(cat /data/ipa-server-install-options | grep 'admin-password' | awk -F= '{ print $2 }')
+			echo ${ADMIN_PASSWORD} | kinit admin
+			if ! (
+				cat /data/ipa-server-adtrust-install-options
+				echo "--admin-password=${ADMIN_PASSWORD}"
+				echo --netbios-name="$(hostname -d | awk -F. '{ print $1 }' | tr [:lower:] [:upper:])"
+			) | xargs ipa-adtrust-install -U; then
+				ret=$?
+				echo "FreeIPA server configuration failed: Could not successfully install AD trust."
+				exit $ret
+			fi
+			kdestroy -A
+		fi
+
 		cat /etc/volume-data-mv-list | while read i ; do
 			rm -rf /data$i
 			if [ -e $i ] ; then
@@ -258,11 +274,12 @@ else
 	fi
 fi
 
-if [ -t 0 ] ; then
+if [ -f /data/startup.sh ] ; then
+	/data/startup.sh
+elif [ -t 0 ] ; then
 	echo 'Starting interactive shell.'
 	/bin/bash
 else
 	echo 'Go loop.'
 	while true ; do sleep 1000 & wait $! ; done
 fi
-

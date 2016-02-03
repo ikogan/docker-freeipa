@@ -4,7 +4,7 @@ FROM centos:centos7
 MAINTAINER Jan Pazdziora
 
 # Install FreeIPA server
-RUN mkdir -p /run/lock ; yum install -y ipa-server ipa-server-dns bind bind-dyndb-ldap perl 'perl(Time::HiRes)' && yum clean all
+RUN mkdir -p /run/lock ; yum install -y ipa-server ipa-server-dns ipa-server-trust-ad bind bind-dyndb-ldap perl 'perl(Time::HiRes)' colortail && yum clean all
 
 ADD dbus.service /etc/systemd/system/dbus.service
 RUN ln -sf dbus.service /etc/systemd/system/messagebus.service
@@ -30,7 +30,7 @@ RUN mv /data-template/etc/dirsrv/schema /usr/share/dirsrv/schema && ln -s /usr/s
 RUN echo 0.5 > /etc/volume-version
 RUN uuidgen > /data-template/build-id
 
-EXPOSE 53/udp 53 80 443 389 636 88 464 88/udp 464/udp 123/udp 7389 9443 9444 9445
+EXPOSE 53/udp 53 80 443 389 389/udp 636 88 464 88/udp 464/udp 123/udp 7389 9443 9444 9445 138 139 445 138/udp 139/udp 445/udp
 
 VOLUME /data
 
